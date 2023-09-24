@@ -27,7 +27,9 @@
 #define LOG_LEVEL INF
 
 #define LOG(level, format, ...) do {                                                          \
-    if (level < LOG_LEVEL) break;                                                             \
+    if (level < LOG_LEVEL) {                                                                  \
+        break;                                                                                \
+    }                                                                                         \
     time_t t = time(nullptr);                                                                 \
     struct tm *lt = localtime(&t);                                                            \
     char time_tmp[64] = { 0 };                                                                \
@@ -44,36 +46,52 @@ class Buffer {
 public:
     Buffer() : buffer_(BUFFER_DEFAULT_SIZE), reader_offset_(0), writer_offset_(0) {}
     // 获取读位置
-    char *ReaderPosition() { return &(*buffer_.begin()) + reader_offset_; }
+    char *ReaderPosition() {
+        return &(*buffer_.begin()) + reader_offset_;
+    }
     // 获取写位置
-    char *WriterPosition() { return &(*buffer_.begin()) + writer_offset_; }
+    char *WriterPosition() {
+        return &(*buffer_.begin()) + writer_offset_;
+    }
     // 获取可读大小
-    uint64_t ReadableSize() { return writer_offset_ - reader_offset_; }
+    uint64_t ReadableSize() {
+        return writer_offset_ - reader_offset_;
+    }
     // 获取头部可写大小（reader之前）
-    uint64_t HeadWritableSize() { return reader_offset_; }
+    uint64_t HeadWritableSize() {
+        return reader_offset_;
+    }
     // 获取尾部可写大小（writer之后）
-    uint64_t TailWritableSize() { return buffer_.size() - writer_offset_; }
+    uint64_t TailWritableSize() {
+        return buffer_.size() - writer_offset_;
+    }
     // 向后移动读偏移量
     void MoveReaderOffset(uint64_t len) {
-        if (len == 0) return;
+        if (len == 0) {
+            return;
+        }
         assert(len <= ReadableSize());
         reader_offset_ += len;
     }
     // 向后移动写偏移量
     void MoveWriterOffset(uint64_t len) {
-        if (len == 0) return;
+        if (len == 0) {
+            return;
+        }
         assert(len <= TailWritableSize());
         writer_offset_ += len;
     }  
     // 确保可写空间大小足够
     void EnsureWritableSpaceEnough(uint64_t len) {
-        if (len == 0) return;
+        if (len == 0) {
+            return;
+        }
         if (len <= TailWritableSize()) {
             // 若尾部空间大小足够，则直接返回
             return;
         } else if (len <= HeadWritableSize() + TailWritableSize()) {
             // 若尾部空间大小不够，但加上头部空间大小就足够了，那么就将数据全部移动到头部
-            std::copy(ReaderPosition(), ReaderPosition() + ReadableSize(), buffer_.begin());
+            std::copy(ReaderPosition(), ReaderPosition() + ReadableSize(), &(*buffer_.begin()));
             reader_offset_ = 0;
             writer_offset_ = ReadableSize();
         } else {
@@ -83,54 +101,72 @@ public:
     }
     // 向Buffer实例中写入数据
     void Write(const void *data, uint64_t len) {
-        if (len == 0) return;
+        if (len == 0) {
+            return;
+        }
         EnsureWritableSpaceEnough(len);
         // 由于void*没有步长，所以这里强转成char*
         std::copy((const char *)data, (const char *)data + len, WriterPosition());
     }
     // 向Buffer实例中写入数据，并且移动写偏移
     void WriteAndPushOffSet(const void *data, uint64_t len) {
-        if (len == 0) return;
+        if (len == 0) {
+            return;
+        }
         Write(data, len);
         MoveWriterOffset(len);
     }
     // 向Buffer实例中写入一个string实例
     void WriteString(const std::string &str) {
-        if (str.size() == 0) return;
+        if (str.size() == 0) {
+            return;
+        }
         Write(str.c_str(), str.size());
     }
     // 向Buffer实例中写入一个string实例，并且移动写偏移
     void WriteStringAndPushOffSet(const std::string &str) {
-        if (str.size() == 0) return;
+        if (str.size() == 0) {
+            return;
+        }
         WriteString(str);
         MoveWriterOffset(str.size());
     }
     // 向Buffer实例中写入一个Buffer实例
     void WriteBuffer(Buffer &buf) {
-        if (buf.ReadableSize() == 0) return;
+        if (buf.ReadableSize() == 0) {
+            return;
+        }
         Write(buf.ReaderPosition(), buf.ReadableSize());
     }
     // 向Buffer实例中写入一个Buffer实例，并且移动写偏移
     void WriteBufferAndPushOffSet(Buffer &buf) {
-        if (buf.ReadableSize() == 0) return;
+        if (buf.ReadableSize() == 0) {
+            return;
+        }
         WriteBuffer(buf);
         MoveWriterOffset(buf.ReadableSize());
     }
     // 从Buffer实例中读出数据
     void Read(void *buf, uint64_t len) {
-        if (len == 0) return;
+        if (len == 0) {
+            return;
+        }
         assert(len <= ReadableSize());
         std::copy(ReaderPosition(), ReaderPosition() + len, (char *)buf);
     }
     // 从Buffer实例中读出数据，并且移动读偏移
     void ReadAndPushOffSet(void *buf, uint64_t len) {
-        if (len == 0) return;
+        if (len == 0) {
+            return;
+        }
         Read(buf, len);
         MoveReaderOffset(len);
     }
     // 从Buffer实例中读出一个string实例
     std::string ReadAsString(uint64_t len) {
-        if (len == 0) return "";
+        if (len == 0) {
+            return "";
+        }
         assert(len <= ReadableSize());
         std::string str;
         str.resize(len);
@@ -139,7 +175,9 @@ public:
     }
     // 从Buffer实例中读出一个string实例，并且移动读偏移
     std::string ReadAsStringAndPushOffSet(uint64_t len) {
-        if (len == 0) return "";
+        if (len == 0) {
+            return "";
+        }
         assert(len <= ReadableSize());
         std::string str = ReadAsString(len);
         MoveReaderOffset(len);
@@ -148,7 +186,9 @@ public:
     // 从Buffer实例中读出一行数据（以'\n'结尾，数据中包含'\n'）
     std::string GetLine() {
         char *pos = (char *)memchr(ReaderPosition(), '\n', ReadableSize());
-        if (pos == nullptr) return "";
+        if (pos == nullptr) {
+            return "";
+        }
         return ReadAsString(pos - ReaderPosition() + 1);
     }
     // 从Buffer实例中读出一行数据（以'\n'结尾，数据中包含'\n'），并且移动读偏移
@@ -158,7 +198,10 @@ public:
         return str;
     }
     // 清空Buffer实例
-    void Clear() { reader_offset_ = writer_offset_ = 0; }
+    void Clear() {
+        reader_offset_ = 0;
+        writer_offset_ = 0;
+    }
     
 private:
     std::vector<char> buffer_; // 缓冲区
@@ -166,12 +209,14 @@ private:
     size_t writer_offset_; // 写偏移
 };
 
-#define DEFAULT_BACKLOG 1024
+#define BACKLOG 1024
 class Socket {
 public:
     Socket() : fd_(-1) {}
     Socket(int fd) : fd_(fd) {}
-    int Fd() { return fd_; }
+    int Fd() {
+        return fd_;
+    }
     bool Create() {
         fd_  = socket(AF_INET, SOCK_STREAM, 0);
         if (fd_ < 0) {
@@ -192,7 +237,7 @@ public:
         }
         return true;
     }
-    bool Listen(int backlog = DEFAULT_BACKLOG) {
+    bool Listen(int backlog = BACKLOG) {
         int ret = listen(fd_, backlog);
         if (ret < 0) {
             ERR_LOG("SOCKET LISTEN ERROR");
@@ -224,9 +269,15 @@ public:
     ssize_t Recv(void *buf, size_t len, int flag = 0) {
         int n = recv(fd_, buf, len, flag);
         if (n <= 0) {
-            if (errno == EAGAIN || errno == EINTR) {
+            // recv缓冲区内没有数据时，此时去读会返回这两个错误
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 return 0;
             }
+            // 操作被信号打断
+            if (errno == EINTR) {
+                return 0;
+            }
+            // 真正发生错误了
             ERR_LOG("SOCKET RECV ERROR");
             return -1;
         }
@@ -240,7 +291,12 @@ public:
     ssize_t Send(const void *buf, size_t len, int flag = 0) {
         int n = send(fd_, buf, len, flag);
         if (n < 0) {
-            if (errno == EAGAIN || errno == EINTR) {
+            // send缓冲区内数据满时，此时去写会返回这两个错误
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return 0;
+            }
+            // 操作被信号打断
+            if (errno == EINTR) {
                 return 0;
             }
             ERR_LOG("SOCKET SEND ERROR");
@@ -259,30 +315,50 @@ public:
         }
     }
     bool CreateServer(uint16_t port, const std::string &ip = "0.0.0.0", bool flag = false) {
-        if (!Create()) return false;
-        if (flag && !SetNonBlock()) return false;
-        if (!Bind(ip, port)) return false;
-        if (!Listen()) return false;
-        if (!SetAddressReuse()) return false;
+        if (!Create()) {
+            return false;
+        }
+        if (flag && !SetNonBlock()) {
+            return false;
+        }
+        if (!Bind(ip, port)) {
+            return false;
+        }
+        if (!Listen()) {
+            return false;
+        }
+        if (!SetAddressReuse()) {
+            return false;
+        }
         return true;
     }
     bool CreateClient(uint16_t port, const std::string &ip) {
-        if (!Create()) return false;
-        if (!Connect(ip, port)) return false;
+        if (!Create()) {
+            return false;
+        }
+        if (!Connect(ip, port)) {
+            return false;
+        }
         return true;
     }
     // 设置fd_地址重用
     bool SetAddressReuse() {
         int opt = 1;
         int ret = setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof opt);
-        if (ret < 0) return false;
+        if (ret < 0) {
+            return false;
+        }
         return true;
     }
     // 设置fd_非阻塞
     bool SetNonBlock() {
         int flag = fcntl(fd_, F_GETFL, 0);
-        if (flag < 0) return false;
-        if (fcntl(fd_, F_SETFL, flag |= O_NONBLOCK) < 0) return false;
+        if (flag < 0) {
+            return false;
+        }
+        if (fcntl(fd_, F_SETFL, flag |= O_NONBLOCK) < 0) {
+            return false;
+        }
         return true;
     }
 private:
@@ -295,11 +371,17 @@ using EventCallBack = std::function<void()>;
 class Channel {
 public:
     Channel(EventLoop *loop, int fd) : loop_(loop), fd_(fd), events_(0), revents_(0) {}
-    int Fd() { return fd_; }
-    // 获取要监控的事件
-    uint32_t Events() { return events_; }
-    // 将已经触发的事件设置进来
-    void SetREvents(uint32_t revents) { revents_ = revents; }
+    int Fd() {
+        return fd_;
+    }
+    // 获取要监控的事件（把想要监控的事件取出，当作epoll_wait的参数）
+    uint32_t Events() {
+        return events_;
+    }
+    // 将已经触发的事件设置进来（把epoll_wait被唤醒时触发的事件设置进来）
+    void SetREvents(uint32_t revents) {
+        revents_ = revents;
+    }
     // 设置读事件回调
     void SetReadCallBack(const EventCallBack &read_callback) { 
         read_callback_ = read_callback;
@@ -353,23 +435,41 @@ public:
         events_ = 0;
         UpdateMonitor();
     }
+    // 这两个函数会将channel中的events设置进epoll中
     void UpdateMonitor();
     void RemoveMonitor(); 
     // 事件的处理函数（一旦有事件触发，就调用该函数，该函数内部会调用相应的事件触发回调函数）
+    // 当epoll_wait被唤醒时，就绪的事件会设置进revents中，channel再调用EventHandler就能够调用相应的事件触发回调函数
     void EventHandler() {
         if ((revents_ & EPOLLIN) || (revents_ & EPOLLRDHUP) || (revents_ & EPOLLPRI)) {
-            if (any_callback_) any_callback_();
-            if (read_callback_) read_callback_();
+            if (any_callback_) {
+                any_callback_();
+            }
+            if (read_callback_) {
+                read_callback_();
+            }
         }        
         if (revents_ & EPOLLOUT) {
-            if (any_callback_) any_callback_();
-            if (write_callback_) write_callback_();
+            if (any_callback_) {
+                any_callback_();
+            }
+            if (write_callback_) {
+                write_callback_();
+            }
         } else if (revents_ & EPOLLERR) {
-            if (any_callback_) any_callback_();
-            if (error_callback_) error_callback_();
+            if (any_callback_) {
+                any_callback_();
+            }
+            if (error_callback_) {
+                error_callback_();
+            }
         } else if (revents_ & EPOLLHUP) {
-            if (any_callback_) any_callback_();
-            if (close_callback_) close_callback_();
+            if (any_callback_) {
+                any_callback_();
+            }
+            if (close_callback_) {
+                close_callback_();
+            }
         }
     }
 
@@ -402,7 +502,7 @@ public:
             epfd_ = -1;
         }
     }
-    // 更新事件监控
+    // 更新事件监控（将channel中设置的events设置进epoll中）
     void UpdateEventMonitor(Channel *channel) {
         if (HasChannel(channel)) {
             // channel已存在，更新事件监控
@@ -413,17 +513,21 @@ public:
             Update(channel, EPOLL_CTL_ADD);
         }
     }
-    // 移除事件监控
+    // 移除事件监控（将channel曾经设置进epoll中的events拿掉）
     void RemoveEventMonitor(Channel *channel) {
         if (HasChannel(channel)) {
             channels_.erase(channel->Fd());
         }
         Update(channel, EPOLL_CTL_DEL);
     }
+    // epoll开始监控，当epoll_wait被唤醒后，会将有事件触发的channel设置进active中
+    // 外界再调用channel的EventHandler执行回调函数
     void Epoll(std::vector<Channel *> *active) {
         int nfds = epoll_wait(epfd_, events_, EPOLLEVENTS_NUMS, -1);
         if (nfds < 0) {
-            if (errno == EINTR) return;
+            if (errno == EINTR) {
+                return;
+            }
             ERR_LOG("EPOLL WAIT ERROR: %s", strerror(errno));
             abort();
         }
@@ -468,17 +572,23 @@ public:
         , release_(release)
         , is_cancel_(false) {}
     ~TimerTask() {
-        if (!is_cancel_) callback_();
+        if (!is_cancel_) {
+            callback_();
+        }
         release_();
     }
-    uint32_t Timeout() { return timeout_; }
-    void SetCancel() { is_cancel_ = true; }
+    uint32_t Timeout() {
+        return timeout_;
+    }
+    void SetCancel() {
+        is_cancel_ = true;
+    }
     
 private:
     uint64_t id_;
     uint32_t timeout_;
     TimerTaskCallBack callback_; 
-    TimerTaskRelease release_;
+    TimerTaskRelease release_;// 当析构函数执行时，会执行定时任务，这时在TimerWheel中映射的hash也要拿掉
     bool is_cancel_; 
 };
 
@@ -493,19 +603,24 @@ public:
         , tick_(0)
         , capacity_(60)
         , wheel_(capacity_) {
+        // 给timerfd注册一个读事件，用epoll监控
         timerfd_channel_->SetReadCallBack(std::bind(&TimerWheel::Ontime, this));
         timerfd_channel_->EnableMonitorRead();
     }
+    // 将定时任务添加到时间轮中，顺便建立起id与TaskWeakPtr的映射关系
     void AddTimerTask(uint64_t id, uint32_t timeout, const TimerTaskCallBack &callback);
+    // 通过id在timers_中找到对应的weakptr，通过这个weakptr构造一个sharedptr按照timeout再次添加到时间轮中
     void RefreshTimerTask(uint64_t id); 
+    // 通过id在timers_中找到对应的weakptr，调用TimerTask里的取消方法 
     void CancelTimerTask(uint64_t id);
+    // 将定时任务从timers_中拿掉
     void ReleaseTimerTask(uint64_t id);
     // 存在线程安全问题
     bool HasTimerTask(uint64_t id) {
         return timers_.find(id) != timers_.end();
     }
 private:
-    void AddTimerTaskToLoop(uint64_t id, 
+    void AddTimerTaskInLoop(uint64_t id, 
                       uint32_t timeout, 
                       const TimerTaskCallBack &callback) {
         TaskSharedPtr tsp(new TimerTask(id, timeout, callback, 
@@ -514,29 +629,36 @@ private:
         size_t pos = (tick_ + timeout) % capacity_;
         wheel_[pos].push_back(tsp);
     }
-    void RefreshTimerTaskToLoop(uint64_t id) {
+    void RefreshTimerTaskInLoop(uint64_t id) {
         auto it = timers_.find(id);
-        if (it == timers_.end()) return;
+        if (it == timers_.end()) {
+            return;
+        }
         TaskSharedPtr tsp(it->second.lock());
         uint32_t timeout = tsp->Timeout();
         size_t pos = (tick_ + timeout) % capacity_;
         wheel_[pos].push_back(tsp);
     }
-    void CancelTimerTaskToLoop(uint64_t id) {
+    void CancelTimerTaskInLoop(uint64_t id) {
         auto it = timers_.find(id);
-        if (it == timers_.end()) return;
+        if (it == timers_.end()) {
+            return;
+        }
         TaskSharedPtr tsp(it->second.lock());
         if (tsp) tsp->SetCancel();
     }
-    void ReleaseTimerTaskToLoop(uint64_t id) {
+    void ReleaseTimerTaskInLoop(uint64_t id) {
         auto it = timers_.find(id);
-        if (it == timers_.end()) return;
-        timers_.erase(it);
+        if (it != timers_.end()) {
+            timers_.erase(it);
+        }
     }
+    // 指针走一步，指针走到哪，就清空哪的内容（释放对象会调用析构函数）
     void Step() {
         tick_ = (tick_ + 1) % capacity_;
         wheel_[tick_].clear();
     }
+    // 创建timerfd，让内核每隔1s就向timerfd中写入数据（以便唤醒epoll_wait，调用时间轮的回调函数，让指针走动，执行定时任务）
     static int CreateTimerfd() {
         int fd = timerfd_create(CLOCK_MONOTONIC, 0);
         if (fd < 0) {
@@ -551,6 +673,7 @@ private:
         timerfd_settime(fd, 0, &itime, nullptr);
         return fd;
     }
+    // 由于这里的epoll_wait是LT模式，所以必须要读走数据，防止事件一直触发
     int ReadTimerfd() {
         uint64_t times;
         int ret = read(timerfd_, &times, 8);
@@ -560,6 +683,7 @@ private:
         }
         return times;
     }
+    // 当epoll_wait被唤醒时，读走timerfd，让指针走动（间隔1s）
     void Ontime() {
         int times = ReadTimerfd();
         for (int i = 0; i < times; ++i) {
@@ -709,16 +833,16 @@ void Channel::RemoveMonitor() {
 } 
 
 void TimerWheel::AddTimerTask(uint64_t id, uint32_t timeout, const TimerTaskCallBack &callback) {
-    loop_->ExecTask(std::bind(&TimerWheel::AddTimerTaskToLoop, this, id, timeout, callback));
+    loop_->ExecTask(std::bind(&TimerWheel::AddTimerTaskInLoop, this, id, timeout, callback));
 }
 void TimerWheel::RefreshTimerTask(uint64_t id) {
-    loop_->ExecTask(std::bind(&TimerWheel::ReleaseTimerTaskToLoop, this, id));
+    loop_->ExecTask(std::bind(&TimerWheel::ReleaseTimerTaskInLoop, this, id));
 } 
 void TimerWheel::CancelTimerTask(uint64_t id) {
-    loop_->ExecTask(std::bind(&TimerWheel::CancelTimerTaskToLoop, this, id));
+    loop_->ExecTask(std::bind(&TimerWheel::CancelTimerTaskInLoop, this, id));
 }
 void TimerWheel::ReleaseTimerTask(uint64_t id) {
-    loop_->ExecTask(std::bind(&TimerWheel::ReleaseTimerTaskToLoop, this, id));
+    loop_->ExecTask(std::bind(&TimerWheel::ReleaseTimerTaskInLoop, this, id));
 }
 
 class Any {
