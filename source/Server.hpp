@@ -2,39 +2,45 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
-#include <functional>
 #include <memory>
+#include <functional>
 #include <typeinfo>
 #include <thread>
 #include <mutex>
-#include <cstdio>
+#include <condition_variable>
 #include <ctime>
+#include <cstdio>
+#include <fcntl.h>
 #include <cassert>
 #include <cstring>
 #include <unistd.h>
-#include <fcntl.h>
 #include <sys/types.h>
-#include <sys/socket.h>
 #include <sys/epoll.h>
+#include <sys/socket.h>
 #include <sys/eventfd.h>
 #include <sys/timerfd.h>
+#include <sys/syscall.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+
+pid_t gettid() {
+    return (pid_t)syscall(__NR_gettid);
+}
 
 #define INF 0
 #define DBG 1
 #define ERR 2
 #define LOG_LEVEL INF
 
-#define LOG(level, format, ...) do {                                                          \
-    if (level < LOG_LEVEL) {                                                                  \
-        break;                                                                                \
-    }                                                                                         \
-    time_t t = time(nullptr);                                                                 \
-    struct tm *lt = localtime(&t);                                                            \
-    char time_tmp[64] = { 0 };                                                                \
-    strftime(time_tmp, sizeof(time_tmp) - 1, "%Y-%m-%d %H:%M:%S", lt);                        \
-    fprintf(stdout, "[%s] %s:%d: " format "\n", time_tmp, __FILE__, __LINE__, ##__VA_ARGS__); \
+#define LOG(level, format, ...) do {                                                                       \
+    if (level < LOG_LEVEL) {                                                                               \
+        break;                                                                                             \
+    }                                                                                                      \
+    time_t t = time(nullptr);                                                                              \
+    struct tm *lt = localtime(&t);                                                                         \
+    char time_tmp[64] = { 0 };                                                                             \
+    strftime(time_tmp, sizeof(time_tmp) - 1, "%Y-%m-%d %H:%M:%S", lt);                                     \
+    fprintf(stdout, "%d [%s] %s:%d: " format "\n", gettid(), time_tmp, __FILE__, __LINE__, ##__VA_ARGS__); \
 } while (0)
 
 #define INF_LOG(format, ...) LOG(INF, format, ##__VA_ARGS__);
@@ -836,7 +842,7 @@ void TimerWheel::AddTimerTask(uint64_t id, uint32_t timeout, const TimerTaskCall
     loop_->ExecTask(std::bind(&TimerWheel::AddTimerTaskInLoop, this, id, timeout, callback));
 }
 void TimerWheel::RefreshTimerTask(uint64_t id) {
-    loop_->ExecTask(std::bind(&TimerWheel::ReleaseTimerTaskInLoop, this, id));
+    loop_->ExecTask(std::bind(&TimerWheel::RefreshTimerTaskInLoop, this, id));
 } 
 void TimerWheel::CancelTimerTask(uint64_t id) {
     loop_->ExecTask(std::bind(&TimerWheel::CancelTimerTaskInLoop, this, id));
@@ -844,6 +850,66 @@ void TimerWheel::CancelTimerTask(uint64_t id) {
 void TimerWheel::ReleaseTimerTask(uint64_t id) {
     loop_->ExecTask(std::bind(&TimerWheel::ReleaseTimerTaskInLoop, this, id));
 }
+
+class Loopthread {
+public:
+    Loopthread() : loop_(nullptr), thread_(std::thread(&Loopthread::ThreadEntry, this)) {}
+    EventLoop *Loop() {
+        EventLoop *loop = nullptr;
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            cond_.wait(lock, [&](){ return loop_ != nullptr; });
+            loop = loop_;
+        }
+        return loop;
+    }
+private:
+    void ThreadEntry() {
+        EventLoop loop;
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            loop_ = &loop;
+            cond_.notify_all();
+        }
+        loop.Run();
+    }
+private:
+    EventLoop *loop_;
+    std::thread thread_;
+    std::mutex mutex_;
+    std::condition_variable cond_;
+};
+
+class LoopThreadPool {
+public:
+    LoopThreadPool(EventLoop *base_loop) : thread_count_(0), next_thread_(0), base_loop_(base_loop) {}
+    void SetThreadCount(int count) {
+        thread_count_ = count;
+    }
+    void Create() {
+        if (thread_count_ > 0) {
+            threads_.resize(thread_count_);
+            loops_.resize(thread_count_);
+            for (int i = 0; i < thread_count_; ++i) {
+                threads_[i] = new Loopthread();
+                loops_[i] = threads_[i]->Loop();
+            }
+        }
+    }
+    EventLoop *Loop() {
+        if (thread_count_ == 0) {
+            return base_loop_;
+        }
+        next_thread_ = (next_thread_ + 1) % thread_count_;
+        return loops_[next_thread_];
+    }
+private:
+    int thread_count_;
+    int next_thread_;
+    EventLoop *base_loop_;
+    std::vector<Loopthread *> threads_; 
+    std::vector<EventLoop *> loops_; 
+};
 
 class Any {
 private:
@@ -1126,4 +1192,42 @@ private:
     CloseCallBack close_callback_;
     AnyCallBack any_callback_;
     CloseCallBack server_close_callback_;
+};
+
+using AcceptorCallBack = std::function<void(int)>;
+class Acceptor 
+{
+public:
+    Acceptor(EventLoop *loop, int port)
+        : loop_(loop)
+        , socket_(CreateServer(port))
+        , channel_(loop_, socket_.Fd()) {
+        channel_.SetReadCallBack(std::bind(&Acceptor::ReadHandler, this));
+    }
+    void ReadHandler() {
+        int fd = socket_.Accept();
+        if (fd < 0) {
+            return;
+        }
+        if (callback_) {
+            callback_(fd);
+        }
+    }
+    void SetReadCallBack(const AcceptorCallBack &callback) {
+        callback_ = callback;
+    }   
+    void Listen() {
+        channel_.EnableMonitorRead();
+    }
+private:
+    int CreateServer(int port) {
+        bool ret = socket_.CreateServer(port);
+        assert(ret);
+        return socket_.Fd();
+    }
+private:
+    EventLoop *loop_;
+    Socket socket_;
+    Channel channel_;
+    AcceptorCallBack callback_;
 };
