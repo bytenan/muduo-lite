@@ -1,7 +1,7 @@
 .PHONY:all
 all:Server Client
 Server:Server.cc 
-	g++ -o $@ $^ -g -std=c++11
+	g++ -o $@ $^ -g -std=c++11 -lpthread
 Client:Client.cc
 	g++ -o $@ $^ -std=c++11
 .PHONY:clean

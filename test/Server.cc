@@ -2,6 +2,9 @@
 
 std::unordered_map<int, ConnectionSharedPtr> conns;
 int id = rand() % 10000;
+std::vector<Loopthread> threads(2);
+int next_loop = 0;
+LoopThreadPool *loop_pool;
 
 void OnMessage(const ConnectionSharedPtr &conn, Buffer *buf) {
     DBG_LOG("%s", buf->ReaderPosition());
@@ -18,35 +21,31 @@ void ConnectionDestroy(const ConnectionSharedPtr &conn) {
     conns.erase(conn->Id());
 }
 
-void Acceptor(EventLoop *loop, int fd) {
-    int newfd = accept(fd, nullptr, nullptr);
-    if (newfd < 0) return;
+void NewConnection(int fd) {
     ++id;
-    ConnectionSharedPtr conn(new Connection(loop, id, newfd));
+    ConnectionSharedPtr conn(new Connection(loop_pool->Loop(), id, fd));
     conn->SetMessageCallBack(std::bind(OnMessage, std::placeholders::_1, std::placeholders::_2));
     conn->SetConnectCallBack(std::bind(OnConnect, std::placeholders::_1));
     conn->SetServerCloseCallBack(std::bind(ConnectionDestroy, std::placeholders::_1));
     conn->EnableInactiveRelease(10);
     conn->Established();
     conns[id] = conn;
+    DBG_LOG("NEW CONNECTION");
 }
 
 int main() {
     srand(time(nullptr));
 
-    EventLoop loop;
+    EventLoop base_loop;
+    loop_pool = new LoopThreadPool(&base_loop);
+    loop_pool->SetThreadCount(2);
+    loop_pool->Create();
 
-    Socket server;
-    server.CreateServer(8888);
+    Acceptor acceptor(&base_loop, 8888);
+    acceptor.SetReadCallBack(std::bind(NewConnection, std::placeholders::_1));
+    acceptor.Listen();
 
-    Channel channel(&loop, server.Fd());
-    channel.SetReadCallBack(std::bind(Acceptor, &loop, server.Fd()));
-    channel.EnableMonitorRead();
-
-    while(true) {
-        loop.Run();
-    }
-    server.Close();
+    base_loop.Run();
 
     return 0;
 }
