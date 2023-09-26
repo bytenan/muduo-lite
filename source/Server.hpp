@@ -851,10 +851,22 @@ void TimerWheel::ReleaseTimerTask(uint64_t id) {
     loop_->ExecTask(std::bind(&TimerWheel::ReleaseTimerTaskInLoop, this, id));
 }
 
+
+/**
+ * EventLoop实例化时就已经初始化了线程ID，也就是说EventLoop必须在线程内部实例化
+ * 而在主从Reactor One Thread One Loop模型中，一个EventLoop对应一个线程
+ * 假设先创建一批EventLoop再分配给其它线程，那么这是不对的（因为EventLoop实例化就已经初始化了线程ID）
+ * 所以该模块的功能就是将EventLoop的实例化和线程绑定起来
+ *      先创建线程
+ *      然后在线程函数中实例化EventLoop
+ */
 class Loopthread {
 public:
     Loopthread() : loop_(nullptr), thread_(std::thread(&Loopthread::ThreadEntry, this)) {}
+    /*当有新连接到来时，需要获取到loop来初始化Connection*/
     EventLoop *Loop() {
+        // 因为不能够确定loop的实例化会在loop的获取之前，所以有可能获取loop时会得到nullptr
+        // 为了防止这种情况，也就是保证能够获取到有效的loop，所以用了mutex和cond
         EventLoop *loop = nullptr;
         {
             std::unique_lock<std::mutex> lock(mutex_);
@@ -874,38 +886,44 @@ private:
         loop.Run();
     }
 private:
-    EventLoop *loop_;
+    EventLoop *loop_; // 这里必须是指针，然后在线程函数内部初始化该指针。
     std::thread thread_;
     std::mutex mutex_;
     std::condition_variable cond_;
 };
 
+/**
+ * 本模块是对所有的LoopThread进行管理分配的
+ * 主从Reactor中，主Reactor只负责获取新连接，从Reactor负责连接的事件监控及处理
+ * 但如果某种场景需求较少，则只需要一个Reactor即可，所以此时从Reactor的数量可能为0（单Reactor服务器）
+ */
 class LoopThreadPool {
 public:
-    LoopThreadPool(EventLoop *base_loop) : thread_count_(0), next_thread_(0), base_loop_(base_loop) {}
-    void SetThreadCount(int count) {
-        thread_count_ = count;
-    }
-    void Create() {
-        if (thread_count_ > 0) {
-            threads_.resize(thread_count_);
-            loops_.resize(thread_count_);
-            for (int i = 0; i < thread_count_; ++i) {
+    LoopThreadPool(EventLoop *base_loop, int size) 
+        : size_(size)
+        , next_loop_(0)
+        , base_loop_(base_loop) {
+        if (size_ > 0) {
+            threads_.resize(size_);
+            loops_.resize(size_);
+            for (int i = 0; i < size_; ++i) {
                 threads_[i] = new Loopthread();
                 loops_[i] = threads_[i]->Loop();
             }
         }
     }
+    /*当有新连接到来时，需要获取到loop来初始化Connection*/
     EventLoop *Loop() {
-        if (thread_count_ == 0) {
+        // 如果是单Reactor服务器，那么就返回base_loop
+        if (size_ == 0) {
             return base_loop_;
         }
-        next_thread_ = (next_thread_ + 1) % thread_count_;
-        return loops_[next_thread_];
+        next_loop_ = (next_loop_ + 1) % size_;
+        return loops_[next_loop_];
     }
 private:
-    int thread_count_;
-    int next_thread_;
+    int size_; // 线程池的线程数量
+    int next_loop_;
     EventLoop *base_loop_;
     std::vector<Loopthread *> threads_; 
     std::vector<EventLoop *> loops_; 
@@ -1194,6 +1212,8 @@ private:
     CloseCallBack server_close_callback_;
 };
 
+
+// 主线程Reactor，专门用来接收连接
 using AcceptorCallBack = std::function<void(int)>;
 class Acceptor 
 {
@@ -1217,6 +1237,7 @@ public:
         callback_ = callback;
     }   
     void Listen() {
+        // 该函数不能放在构造函数中，因为启动读监控后，可能立马就会有连接到来，但此时还可能并未设置callback
         channel_.EnableMonitorRead();
     }
 private:
