@@ -1,9 +1,11 @@
 .PHONY:all
-all:Server Client
-Server:Server.cc 
+all:TcpServer TestServer TestClient
+TcpServer:TcpServer.cc
 	g++ -o $@ $^ -g -std=c++11 -lpthread
-Client:Client.cc
+TestServer:TestServer.cc 
+	g++ -o $@ $^ -g -std=c++11 -lpthread
+TestClient:TestClient.cc
 	g++ -o $@ $^ -std=c++11
 .PHONY:clean
 clean:
-	rm -f Server Client
+	rm -f TcpServer TestServer TestClient

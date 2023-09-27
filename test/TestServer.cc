@@ -37,7 +37,9 @@ int main() {
     srand(time(nullptr));
 
     EventLoop base_loop;
-    loop_pool = new LoopThreadPool(&base_loop, 2);
+    loop_pool = new LoopThreadPool(&base_loop);
+    loop_pool->SetThreadLoopSize(2);
+    loop_pool->Create();
 
     Acceptor acceptor(&base_loop, 8888);
     acceptor.SetReadCallBack(std::bind(NewConnection, std::placeholders::_1));
