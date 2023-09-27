@@ -1,3 +1,6 @@
+#ifndef __SERVER_HPP__
+#define __SERVER_HPP__
+
 #include <iostream>
 #include <vector>
 #include <string>
@@ -10,9 +13,10 @@
 #include <condition_variable>
 #include <ctime>
 #include <cstdio>
-#include <fcntl.h>
 #include <cassert>
 #include <cstring>
+#include <fcntl.h>
+#include <signal.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/epoll.h>
@@ -899,10 +903,11 @@ private:
  */
 class LoopThreadPool {
 public:
-    LoopThreadPool(EventLoop *base_loop, int size) 
-        : size_(size)
-        , next_loop_(0)
-        , base_loop_(base_loop) {
+    LoopThreadPool(EventLoop *base_loop) : size_(0), next_loop_(0), base_loop_(base_loop) {}
+    void SetThreadLoopSize(int size) {
+        size_ = size;
+    }
+    void Create() {
         if (size_ > 0) {
             threads_.resize(size_);
             loops_.resize(size_);
@@ -994,7 +999,6 @@ public:
         channel_.SetCloseCallBack(std::bind(&Connection::CloseHandler, this));
         channel_.SetAnyCallBack(std::bind(&Connection::AnyHandler, this));
     }
-    ~Connection() { DBG_LOG("RELEASE CONNECTED: %p", this); }
     int Id() { return id_; }
     int Fd() { return fd_; }
     bool IsConnected() { statu_ == CONNECTED; }
@@ -1252,3 +1256,97 @@ private:
     Channel channel_;
     AcceptorCallBack callback_;
 };
+
+
+class TcpServer {
+public:
+    TcpServer(int port)
+        : port_(port)
+        , next_connid_(0)
+        , next_timerid_(0)
+        , timeout_(0)
+        , enable_inactive_release_(false)
+        , acceptor_(&baseloop_, port_)
+        , pool_(&baseloop_) {
+        acceptor_.SetReadCallBack(std::bind(&TcpServer::NewConnection, this, std::placeholders::_1));
+        acceptor_.Listen();
+    }
+    void SetConnectCallBack(const ConnectCallBack &connect_callback) {
+        connect_callback_ = connect_callback;
+    }
+    void SetMessageCallBack(const MessageCallBack &message_callback) {
+        message_callback_ = message_callback;
+    }
+    void SetCloseCallBack(const CloseCallBack &close_callback) {
+        close_callback_ = close_callback;
+    }
+    void SetAnyCallBack(const AnyCallBack &any_callback) {
+        any_callback_ = any_callback;
+    }
+    void SetThreadLoopSize(int size) {
+        pool_.SetThreadLoopSize(size);
+    }
+    void EnableInactiveRelease(int timeout) {
+        timeout_ = timeout;
+        enable_inactive_release_ = true;
+    }
+    void AddTimerTask(const Functor &task, int timeout) {
+        baseloop_.ExecTask(std::bind(&TcpServer::AddTimerTaskInLoop, this, task, timeout));
+    }
+    void Run() {
+        pool_.Create();
+        baseloop_.Run();
+    }
+private:
+    void NewConnection(int fd) {
+        ++next_connid_;
+        ConnectionSharedPtr conn(new Connection(pool_.Loop(), next_connid_, fd));
+        conn->SetMessageCallBack(message_callback_);
+        conn->SetConnectCallBack(connect_callback_);
+        conn->SetCloseCallBack(close_callback_);
+        conn->SetAnyCallBack(any_callback_);
+        conn->SetServerCloseCallBack(std::bind(&TcpServer::ReleaseConnection, this, std::placeholders::_1));
+        if (enable_inactive_release_) {
+            conn->EnableInactiveRelease(10);
+        }
+        conn->Established();
+        conns_[next_connid_] = conn;
+    }
+    void AddTimerTaskInLoop(const Functor &task, int timeout) {
+        next_timerid_++;
+        baseloop_.AddTimerTask(next_timerid_, timeout, task);
+    }
+    void ReleaseConnectionInLoop(const ConnectionSharedPtr &conn) {
+        auto it = conns_.find(conn->Id());
+        if (it != conns_.end()) {
+            conns_.erase(it);
+        }
+    }
+    void ReleaseConnection(const ConnectionSharedPtr &conn) {
+        baseloop_.ExecTask(std::bind(&TcpServer::ReleaseConnectionInLoop, this, conn));
+    }
+private:
+    int port_;
+    int next_connid_;
+    int next_timerid_;
+    int timeout_;
+    bool enable_inactive_release_;
+    EventLoop baseloop_;
+    Acceptor acceptor_;
+    LoopThreadPool pool_;
+    std::unordered_map<uint64_t, ConnectionSharedPtr> conns_;
+    ConnectCallBack connect_callback_;
+    MessageCallBack message_callback_;
+    CloseCallBack close_callback_;
+    AnyCallBack any_callback_;
+};
+
+class NetWork {
+public:
+    NetWork() {
+        signal(SIGPIPE, SIG_IGN);
+    }
+};
+static NetWork nw;
+
+#endif // __SERVER_HPP__
