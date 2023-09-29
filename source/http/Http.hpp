@@ -1,4 +1,5 @@
 #include <fstream>
+#include <regex>
 #include <cctype>
 #include <sys/stat.h>
 #include "../Server.hpp"
@@ -300,4 +301,124 @@ private:
         } 
         return -1;
     }
+};
+
+class Request {
+public:
+    // 插入指定头部字段
+    void SetHeader(const std::string &key, const std::string &val) {
+        headers_.insert(std::make_pair(key, val));
+    }
+    // 获取指定头部字段
+    std::string Header(const std::string &key) {
+        auto it = headers_.find(key);
+        if (it == headers_.end()) {
+            return "";
+        }
+        return it->second;
+    }
+    // 判断指定头部字段是否存在
+    bool HasHeader(const std::string &key) {
+        return headers_.find(key) != headers_.end();
+    }
+    // 插入指定查询字符串
+    void SetParam(const std::string &key, const std::string &val) {
+        params_.insert(std::make_pair(key, val));
+    }
+    // 获取指定查询字符串
+    std::string Param(const std::string &key) {
+        auto it = params_.find(key);
+        if (it == params_.end()) {
+            return "";
+        }
+        return it->second;
+    }
+    // 判断指定查询字符串是否存在
+    bool HasParam(const std::string &key) {
+        return params_.find(key) != params_.end();
+    }
+    // 获取正文长度
+    size_t ContentLength() {
+        if(!HasHeader("Content-Length")) {
+            return 0;
+        }
+        return std::stol(Header("Content-Length"));
+    }
+    // 判断是否是短链接
+    bool Close() {
+        if(HasHeader("Connection") && Header("Connection") == "keep-alive") {
+            return true;
+        }
+        return false;
+    }
+    // 重置Request实例
+    void Reset() {
+        method_.clear();
+        path_.clear();
+        version_.clear();
+        body_.clear();
+        std::smatch matches;
+        matches.swap(matches_);
+        headers_.clear();
+        params_.clear();
+    }
+
+public:
+    std::string method_;  //请求方法
+    std::string path_;    //资源路径
+    std::string version_; //协议版本
+    std::string body_;    //请求正文
+    std::smatch matches_; //资源路径的正则提取数据
+    std::unordered_map<std::string, std::string> headers_; //头部字段
+    std::unordered_map<std::string, std::string> params_;  //查询字符串
+};
+
+class Response {
+public:
+    Response() : redirect_flag_(false), status_(200) {}
+    Response(int status) : redirect_flag_(false), status_(status) {}
+    // 插入指定头部字段
+    void SetHeader(const std::string &key, const std::string &val) {
+        headers_.insert(std::make_pair(key, val));
+    }
+    // 获取指定头部字段
+    std::string Header(const std::string &key) {
+        auto it = headers_.find(key);
+        if (it == headers_.end()) {
+            return "";
+        }
+        return it->second;
+    }
+    // 判断指定头部字段是否存在
+    bool HasHeader(const std::string &key) {
+        return headers_.find(key) != headers_.end();
+    }
+    void SetContent(const std::string &body, const std::string &type = "text/html") {
+        body_ = body;
+        SetHeader("Content-type", type);
+    }
+    void SetRedirect(const std::string &url, int status = 302) {
+        status_ = status;
+        redirect_flag_ = true;
+        redirect_location_ = url;
+    }
+    bool Close() {
+        if(HasHeader("Connection") && Header("Connection") == "keep-alive") {
+            return true;
+        }
+        return false;
+    }
+    void Reset() {
+        status_ = 200;
+        body_.clear();
+        headers_.clear();
+        redirect_flag_ = false;
+        redirect_location_.clear();
+    }
+public:
+    int status_; // 状态码
+    std::string body_;   // 响应正文
+    std::unordered_map<std::string, std::string> headers_; //头部字段
+    bool redirect_flag_; // 是否重定向标志
+    std::string redirect_location_; // 重定向位置
 };
