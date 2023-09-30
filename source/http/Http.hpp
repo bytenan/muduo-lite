@@ -422,3 +422,156 @@ public:
     bool redirect_flag_; // 是否重定向标志
     std::string redirect_location_; // 重定向位置
 };
+
+typedef enum {
+    RECV_HTTP_ERROR,
+    RECV_HTTP_LINE,
+    RECV_HTTP_HEAD,
+    RECV_HTTP_BODY,
+    RECV_HTTP_OVER
+}RecvStatus;
+
+#define MAX_LINE 8096
+class Context {
+public:
+    Context() : resp_status_(200), recv_status_(RECV_HTTP_LINE) {}
+    void RecvRequest(Buffer *buf) {
+        switch(recv_status_) {
+            case RECV_HTTP_LINE: RecvHttpLine(buf);
+            case RECV_HTTP_HEAD: RecvHttpHead(buf);
+            case RECV_HTTP_BODY: RecvHttpBody(buf);
+        }
+    }
+    int GetRespStatus() {
+        return resp_status_;
+    }
+    RecvStatus GetRecvStatus() {
+        return recv_status_;
+    }
+    Request &GetRequest() {
+        return request_;
+    }
+private:
+    bool RecvHttpLine(Buffer *buf) {
+        if (recv_status_ != RECV_HTTP_LINE) {
+            return false;
+        }
+        std::string line = buf->GetLineAndPushOffSet();
+        if (line.size() == 0) {
+            if (buf->ReadableSize() > MAX_LINE) {
+                resp_status_ = 414; // URI Too Long
+                recv_status_ = RECV_HTTP_ERROR;
+                return false;
+            }
+            return true;
+        }
+        if (line.size() > MAX_LINE) {
+            resp_status_ = 414; // URI Too Long
+            recv_status_ = RECV_HTTP_ERROR;
+            return false;
+        }
+        if(!ParseHttpLine(line)) {
+            return false;
+        }
+        recv_status_ = RECV_HTTP_HEAD;
+        return true;
+    }
+    bool ParseHttpLine(const std::string &line) {
+        std::smatch matches;
+        std::regex e("(GET|HEAD|POST|PUT|DELETE|CONNECT|OPTIONS|TRACE) ([^?]*)(?:\\?(.*))? (HTTP/1\\.[01])(?:\n|\r\n)?");
+        bool ret = std::regex_match(line, matches, e);
+        if (!ret) {
+            resp_status_ = 400;
+            recv_status_ = RECV_HTTP_ERROR;
+            return false;
+        }
+        request_.method_ = matches[1];
+        request_.path_ = Util::UrlDecode(matches[2], false);
+        request_.version_ = matches[4];
+        std::string query_string = matches[3];
+        std::vector<std::string> query_string_array;
+        Util::Split(query_string, "&", &query_string_array);           
+        for (auto &str : query_string_array) {
+            std::vector<std::string> query_param_array;
+            if (Util::Split(str, "=", &query_param_array) != 2) {
+                resp_status_ = 400;
+                recv_status_ = RECV_HTTP_ERROR;
+                return false;
+            }
+            std::string key = Util::UrlDecode(query_param_array[0], true);
+            std::string val = Util::UrlDecode(query_param_array[1], true);
+            request_.SetParam(key, val);
+        }
+        return true;
+    }
+    bool RecvHttpHead(Buffer *buf) {
+        if (recv_status_ != RECV_HTTP_HEAD) {
+            return false;
+        }   
+        while (true) {
+            std::string line = buf->GetLineAndPushOffSet();
+            if (line.size() == 0) {
+                if (buf->ReadableSize() > MAX_LINE) {
+                    resp_status_ = 414; // URI Too Long
+                    recv_status_ = RECV_HTTP_ERROR;
+                    return false;
+                }
+                return true;
+            }
+            if (line.size() > MAX_LINE) {
+                resp_status_ = 414; // URI Too Long
+                recv_status_ = RECV_HTTP_ERROR;
+                return false;
+            }
+            if (line == "\n" || line == "\r\n") {
+                break;
+            }
+            if (!ParseHttpHead(line)) {
+                return false;
+            }
+        }
+        recv_status_ = RECV_HTTP_BODY;
+        return true;
+    }
+    bool ParseHttpHead(std::string &line) {
+        if (line.back() == '\n') {
+            line.pop_back();
+        }
+        if (line.back() == '\r') {
+            line.pop_back();
+        }
+        std::vector<std::string> array;
+        if(Util::Split(line, ": ", &array) != 2) {
+            resp_status_ = 400;
+            recv_status_ = RECV_HTTP_ERROR;
+            return false;
+        }
+        request_.SetHeader(array[0], array[1]);
+        return true;
+    }
+    bool RecvHttpBody(Buffer *buf) {
+        if (recv_status_ != RECV_HTTP_BODY) {
+            return false;
+        }
+        size_t content_length = request_.ContentLength();
+        if (content_length == 0) {
+            recv_status_ = RECV_HTTP_OVER;
+            return true;
+        }
+        size_t received_length = request_.body_.size();
+        size_t no_received_length = content_length - received_length;
+        if (buf->ReadableSize() >= no_received_length) {
+            request_.body_.append(buf->ReaderPosition(), no_received_length);
+            buf->MoveReaderOffset(no_received_length);
+            recv_status_ = RECV_HTTP_OVER;
+            return true;
+        }
+        request_.body_.append(buf->ReaderPosition(), buf->ReadableSize());
+        buf->MoveReaderOffset(buf->ReadableSize());
+        return true;
+    }
+private:
+    int resp_status_;    // 响应状态码
+    RecvStatus recv_status_; // 当前接受及解析请求信息所处的状态
+    Request request_;        // 请求信息
+};
