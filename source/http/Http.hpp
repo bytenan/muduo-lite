@@ -1,4 +1,5 @@
 #include <fstream>
+#include <sstream>
 #include <regex>
 #include <cctype>
 #include <sys/stat.h>
@@ -100,7 +101,7 @@ public:
         return ans;
     }
     // 根据状态码，得到状态信息
-    static std::string StatuDescription(int statu) {
+    static std::string StatusDescription(int statu) {
         std::unordered_map<int, std::string> dict = {
             {100,  "Continue"},
             {101,  "Switching Protocol"},
@@ -310,7 +311,7 @@ public:
         headers_.insert(std::make_pair(key, val));
     }
     // 获取指定头部字段
-    std::string Header(const std::string &key) {
+    std::string GetHeader(const std::string &key) {
         auto it = headers_.find(key);
         if (it == headers_.end()) {
             return "";
@@ -326,7 +327,7 @@ public:
         params_.insert(std::make_pair(key, val));
     }
     // 获取指定查询字符串
-    std::string Param(const std::string &key) {
+    std::string GetParam(const std::string &key) {
         auto it = params_.find(key);
         if (it == params_.end()) {
             return "";
@@ -338,21 +339,21 @@ public:
         return params_.find(key) != params_.end();
     }
     // 获取正文长度
-    size_t ContentLength() {
+    size_t GetContentLength() {
         if(!HasHeader("Content-Length")) {
             return 0;
         }
-        return std::stol(Header("Content-Length"));
+        return std::stol(GetHeader("Content-Length"));
     }
     // 判断是否是短链接
-    bool Close() {
-        if(HasHeader("Connection") && Header("Connection") == "keep-alive") {
+    bool IsClose() {
+        if(HasHeader("Connection") && GetHeader("Connection") == "keep-alive") {
             return true;
         }
         return false;
     }
     // 重置Request实例
-    void Reset() {
+    void ReSet() {
         method_.clear();
         path_.clear();
         version_.clear();
@@ -382,7 +383,7 @@ public:
         headers_.insert(std::make_pair(key, val));
     }
     // 获取指定头部字段
-    std::string Header(const std::string &key) {
+    std::string GetHeader(const std::string &key) {
         auto it = headers_.find(key);
         if (it == headers_.end()) {
             return "";
@@ -402,13 +403,13 @@ public:
         redirect_flag_ = true;
         redirect_location_ = url;
     }
-    bool Close() {
-        if(HasHeader("Connection") && Header("Connection") == "keep-alive") {
+    bool IsClose() {
+        if(HasHeader("Connection") && GetHeader("Connection") == "keep-alive") {
             return true;
         }
         return false;
     }
-    void Reset() {
+    void ReSet() {
         status_ = 200;
         body_.clear();
         headers_.clear();
@@ -451,6 +452,11 @@ public:
     Request &GetRequest() {
         return request_;
     }
+    void ReSet() {
+        resp_status_ = 200;
+        recv_status_ = RECV_HTTP_LINE;
+        request_.ReSet();
+    }
 private:
     bool RecvHttpLine(Buffer *buf) {
         if (recv_status_ != RECV_HTTP_LINE) {
@@ -478,7 +484,8 @@ private:
     }
     bool ParseHttpLine(const std::string &line) {
         std::smatch matches;
-        std::regex e("(GET|HEAD|POST|PUT|DELETE|CONNECT|OPTIONS|TRACE) ([^?]*)(?:\\?(.*))? (HTTP/1\\.[01])(?:\n|\r\n)?");
+        // 最后一个参数的作用是：使匹配时忽略大小写
+        std::regex e("(GET|HEAD|POST|PUT|DELETE) ([^?]*)(?:\\?(.*))? (HTTP/1\\.[01])(?:\n|\r\n)?", std::regex::icase);
         bool ret = std::regex_match(line, matches, e);
         if (!ret) {
             resp_status_ = 400;
@@ -486,6 +493,8 @@ private:
             return false;
         }
         request_.method_ = matches[1];
+        // 将method_转换成大写
+        std::transform(request_.method_.begin(), request_.method_.end(), request_.method_.begin(), ::toupper);
         request_.path_ = Util::UrlDecode(matches[2], false);
         request_.version_ = matches[4];
         std::string query_string = matches[3];
@@ -553,7 +562,7 @@ private:
         if (recv_status_ != RECV_HTTP_BODY) {
             return false;
         }
-        size_t content_length = request_.ContentLength();
+        size_t content_length = request_.GetContentLength();
         if (content_length == 0) {
             recv_status_ = RECV_HTTP_OVER;
             return true;
@@ -574,4 +583,173 @@ private:
     int resp_status_;    // 响应状态码
     RecvStatus recv_status_; // 当前接受及解析请求信息所处的状态
     Request request_;        // 请求信息
+};
+
+#define DEFAULT_TIMEOUT 30
+class HttpServer {
+public:
+    using Handler = std::function<void()>;
+    using Handlers = std::unordered_map<std::regex, Handler>;
+
+public:
+    HttpServer(int port, int timeout = DEFAULT_TIMEOUT) : server_(port) {
+        server_.EnableInactiveRelease(timeout);
+        server_.SetConnectCallBack(std::bind(&HttpServer::OnConnect, this, std::placeholders::_1));
+        server_.SetMessageCallBack(std::bind(&HttpServer::OnMessage, this, std::placeholders::_1, std::placeholders::_2));
+    }
+    void SetThreadLoopSize(int size) {
+        server_.SetThreadLoopSize(size);
+    }
+    void Listen() {
+        server_.Run();
+    }
+    void SetBaseDir(const std::string &path) {
+        base_dir_ = path;
+    }
+    void Get(const std::string &pattern, Handler handler) {
+        get_handlers_.insert(std::make_pair(std::regex(pattern), handler));
+    }
+    void Post(const std::string &pattern, Handler handler) {
+        post_handlers_.insert(std::make_pair(std::regex(pattern), handler));
+    }
+    void Put(const std::string &pattern, Handler handler) {
+        put_handlers_.insert(std::make_pair(std::regex(pattern), handler));
+    }
+    void Delete(const std::string &pattern, Handler handler) {
+        delete_handlers_.insert(std::make_pair(std::regex(pattern), handler));
+    }
+
+private:
+    void OnConnect(const ConnectionSharedPtr &conn) {
+        conn->SetContent(Context());
+        DBG_LOG("NEW CONNECTION: %p", conn.get());
+    }
+    void OnMessage(const ConnectionSharedPtr &conn, Buffer *buffer) {
+        Context *context = conn->Context()->get<Context>();
+        context->RecvRequest(buffer);
+        Response resp(contex->GetRespStatus());
+        if (context->GetRespStatus() >= 400) {
+            OnError(&resp);
+            WriteResponse(conn, req, resp);
+            conn->Shutdown();
+            return;
+        }
+        if (context->GetRecvStatus() != RECV_HTTP_OVER) {
+            return;
+        }
+        Request &req = context->GetRequest();
+        Routing(req, &resp);
+        WriteResponse(conn, req, resp);
+        context->ReSet();
+        if (resp.IsClose()) {
+            conn->Shutdown();
+        }
+    }
+    void OnError(Response *resp) {
+        std::string body;
+        body += "<html>";
+        body += "<head>";
+        body += "<meta charset='utf-8'>"
+        body += "</head>";
+        body += "<body>";
+        body += "<h1>";
+        body += std::to_string(resp->status_);
+        body += " ";
+        body += Util::StatusDescription(resp->status_);
+        body += "</h1>";
+        body += "</body>";
+        body += "</html>";
+        resp->SetContent(body, "text/html");
+    }
+    void WriteResponse(const ConnectionSharedPtr &conn, const Request &req, const Response &resp) {
+        if (req.IsClose()) {
+            resp.SetHeader("Connection", "close");
+        } else {
+            resp.SetHeader("Connection", "keep-alive");
+        }
+        if (!resp.body_.empty()) {
+            if (!resp.HasHeader("Content-Length")) {
+                resp.SetHeader("Content-Length", std::to_string(resp.body_.size()));
+            }
+            if (!resp.HasHeader("Content-Type")) {
+                resp.SetHeader("Content-Type", "application/octet-stream");
+            }
+        }
+        if (resp.redirect_flag_) {
+            resp.SetHeader("Location", resp.redirect_location_);
+        }
+        std::stringstream resp_str;
+        resp_str << req.version_ << " " 
+                 << resp.status_ << " " 
+                 << Util::StatusDescription(resp.status_) << "\r\n";
+        for (auto &head : resp.headers_) {
+            resp_str << head->first << " "
+                     << head->second << "\r\n";
+        }
+        resp_str << "\r\n";
+        resp_str << resp.body_;
+        conn->Send(resp_str.str().c_str(), resp_str.str().size());
+    }
+    void Dispatcher(const Request &req, const Response &resp, const Handlers &handlers) {
+        for (auto &x : handlers) {
+            auto &regex = x->first;
+            auto &handler = x->second;
+            bool ret = std::regex_match(req.path_, req.matches_, regex);
+            if (!ret) {
+                continue;
+            }
+            return handler(req, resp);
+        }
+        resp->status_ = 404;
+    }
+    void FileHandler(const Request &req, Response *resp) {
+        bool ret = Util::ReadFile(req.path_, &resp->body_);
+        if (!ret) {
+            return;
+        }
+        resp->SetHeader("Content-Type", Util::ExtendMime(req.path_));
+    } 
+    bool IsFileRequest(const Request &req) {
+        if (base_dir_.empty()) {
+            return false;
+        }
+        if (req.method_ != "GET" && req.method_ != "HEAD") {
+            return false;
+        }
+        if (!Util::IsValidPath(req.path_)) {
+            return false;
+        }
+        std::string path = base_dir_ + req.path_;
+        if (req.path_.back() == "/") {
+            path += "index.html";
+        }
+        if (!Util::IsRegularFile(path)) {
+            return false;
+        }
+        req.path_ = path;
+        return true;
+    }
+    void Routing(const Request &req, Response *resp) {
+        if (IsFileRequest(req)) {
+            return FileHandler(req, resp);
+        }
+        if (req.method_ == "GET" || req.method_ == "HEAD") {
+            return Dispatcher(req, resp, get_handlers_);
+        } else if (req.method_ == "POST") {
+            return Dispatcher(req, resp, post_handlers_);
+        } else if (req.method_ == "PUT") {
+            return Dispatcher(req, resp, put_handlers_);
+        } else if (req.method_ == "DELETE") {
+            return Dispatcher(req, resp, delete_handlers_);
+        }
+        resp->status_ = 405; // Method Not Allowed 
+    }
+
+private:
+    Handlers get_handlers_;
+    Handlers post_handlers_;
+    Handlers put_handlers_;
+    Handlers delete_handlers_;
+    std::string base_dir_;
+    TcpServer server_;
 };
