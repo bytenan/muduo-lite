@@ -306,6 +306,7 @@ private:
 
 class Request {
 public:
+    Request() : version_("HTTP/1.1") {}
     // 插入指定头部字段
     void SetHeader(const std::string &key, const std::string &val) {
         headers_.insert(std::make_pair(key, val));
@@ -356,7 +357,7 @@ public:
     void ReSet() {
         method_.clear();
         path_.clear();
-        version_.clear();
+        version_ = "HTTP/1.1";
         body_.clear();
         std::smatch matches;
         matches.swap(matches_);
@@ -588,8 +589,8 @@ private:
 #define DEFAULT_TIMEOUT 30
 class HttpServer {
 public:
-    using Handler = std::function<void()>;
-    using Handlers = std::unordered_map<std::regex, Handler>;
+    using Handler = std::function<void(const Request &, Response *)>;
+    using Handlers = std::vector<std::pair<std::regex, Handler>>;
 
 public:
     HttpServer(int port, int timeout = DEFAULT_TIMEOUT) : server_(port) {
@@ -604,52 +605,58 @@ public:
         server_.Run();
     }
     void SetBaseDir(const std::string &path) {
+        bool ret = Util::IsDirectoryFile(path);
+        assert(ret);            
         base_dir_ = path;
     }
     void Get(const std::string &pattern, Handler handler) {
-        get_handlers_.insert(std::make_pair(std::regex(pattern), handler));
+        get_handlers_.push_back(std::make_pair(std::regex(pattern), handler));
     }
     void Post(const std::string &pattern, Handler handler) {
-        post_handlers_.insert(std::make_pair(std::regex(pattern), handler));
+        post_handlers_.push_back(std::make_pair(std::regex(pattern), handler));
     }
     void Put(const std::string &pattern, Handler handler) {
-        put_handlers_.insert(std::make_pair(std::regex(pattern), handler));
+        put_handlers_.push_back(std::make_pair(std::regex(pattern), handler));
     }
     void Delete(const std::string &pattern, Handler handler) {
-        delete_handlers_.insert(std::make_pair(std::regex(pattern), handler));
+        delete_handlers_.push_back(std::make_pair(std::regex(pattern), handler));
     }
 
 private:
     void OnConnect(const ConnectionSharedPtr &conn) {
-        conn->SetContent(Context());
+        conn->SetContext(Context());
         DBG_LOG("NEW CONNECTION: %p", conn.get());
     }
     void OnMessage(const ConnectionSharedPtr &conn, Buffer *buffer) {
-        Context *context = conn->Context()->get<Context>();
-        context->RecvRequest(buffer);
-        Response resp(contex->GetRespStatus());
-        if (context->GetRespStatus() >= 400) {
-            OnError(&resp);
+        while (buffer->ReadableSize() > 0) {
+            Context *context = conn->Context()->get<Context>();
+            context->RecvRequest(buffer);
+            Request &req = context->GetRequest();
+            Response resp(context->GetRespStatus());
+            if (context->GetRespStatus() >= 400) {
+                OnError(&resp);
+                WriteResponse(conn, req, resp);
+                context->ReSet();
+                buffer->MoveReaderOffset(buffer->ReadableSize());
+                conn->Shutdown();
+                return;
+            }
+            if (context->GetRecvStatus() != RECV_HTTP_OVER) {
+                return;
+            }
+            Routing(req, &resp);
             WriteResponse(conn, req, resp);
-            conn->Shutdown();
-            return;
-        }
-        if (context->GetRecvStatus() != RECV_HTTP_OVER) {
-            return;
-        }
-        Request &req = context->GetRequest();
-        Routing(req, &resp);
-        WriteResponse(conn, req, resp);
-        context->ReSet();
-        if (resp.IsClose()) {
-            conn->Shutdown();
+            context->ReSet();
+            if (resp.IsClose()) {
+                conn->Shutdown();
+            }
         }
     }
     void OnError(Response *resp) {
         std::string body;
         body += "<html>";
         body += "<head>";
-        body += "<meta charset='utf-8'>"
+        body += "<meta charset='utf-8'>";
         body += "</head>";
         body += "<body>";
         body += "<h1>";
@@ -661,7 +668,7 @@ private:
         body += "</html>";
         resp->SetContent(body, "text/html");
     }
-    void WriteResponse(const ConnectionSharedPtr &conn, const Request &req, const Response &resp) {
+    void WriteResponse(const ConnectionSharedPtr &conn, Request &req, Response &resp) {
         if (req.IsClose()) {
             resp.SetHeader("Connection", "close");
         } else {
@@ -680,20 +687,20 @@ private:
         }
         std::stringstream resp_str;
         resp_str << req.version_ << " " 
-                 << resp.status_ << " " 
+                 << std::to_string(resp.status_) << " " 
                  << Util::StatusDescription(resp.status_) << "\r\n";
         for (auto &head : resp.headers_) {
-            resp_str << head->first << " "
-                     << head->second << "\r\n";
+            resp_str << head.first << ": "
+                     << head.second << "\r\n";
         }
         resp_str << "\r\n";
         resp_str << resp.body_;
         conn->Send(resp_str.str().c_str(), resp_str.str().size());
     }
-    void Dispatcher(const Request &req, const Response &resp, const Handlers &handlers) {
+    void Dispatcher(Request &req, Response *resp, Handlers &handlers) {
         for (auto &x : handlers) {
-            auto &regex = x->first;
-            auto &handler = x->second;
+            auto &regex = x.first;
+            auto &handler = x.second;
             bool ret = std::regex_match(req.path_, req.matches_, regex);
             if (!ret) {
                 continue;
@@ -703,11 +710,15 @@ private:
         resp->status_ = 404;
     }
     void FileHandler(const Request &req, Response *resp) {
-        bool ret = Util::ReadFile(req.path_, &resp->body_);
+        std::string path = base_dir_ + req.path_;
+        if (req.path_.back() == '/') {
+            path += "index.html";
+        }
+        bool ret = Util::ReadFile(path, &resp->body_);
         if (!ret) {
             return;
         }
-        resp->SetHeader("Content-Type", Util::ExtendMime(req.path_));
+        resp->SetHeader("Content-Type", Util::ExtendMime(path));
     } 
     bool IsFileRequest(const Request &req) {
         if (base_dir_.empty()) {
@@ -720,16 +731,15 @@ private:
             return false;
         }
         std::string path = base_dir_ + req.path_;
-        if (req.path_.back() == "/") {
+        if (req.path_.back() == '/') {
             path += "index.html";
         }
         if (!Util::IsRegularFile(path)) {
             return false;
         }
-        req.path_ = path;
         return true;
     }
-    void Routing(const Request &req, Response *resp) {
+    void Routing(Request &req, Response *resp) {
         if (IsFileRequest(req)) {
             return FileHandler(req, resp);
         }

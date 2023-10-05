@@ -1,43 +1,47 @@
 #include "Http.hpp"
 
+#define WWWROOT "./wwwroot/"
+
+std::string RequestToStr(const Request &req) {
+    std::stringstream ss;
+    ss << req.method_ << " " << req.path_ << " " << req.version_ << "\r\n";
+    for (auto &it : req.params_) {
+        ss << it.first << ": " << it.second << "\r\n";
+    }
+    for (auto &it : req.headers_) {
+        ss << it.first << ": " << it.second << "\r\n";
+    }
+    ss << "\r\n";
+    ss << req.body_;
+    return ss.str(); 
+}
+
+void Hello(const Request &req, Response *resp) {
+    resp->SetContent(RequestToStr(req), "text/plain");
+}
+
+void Login(const Request &req, Response *resp) {
+    resp->SetContent(RequestToStr(req), "text/plain");
+}
+
+void PutFile(const Request &req, Response *resp) {
+    resp->SetContent(RequestToStr(req), "text/plain");
+}
+
+void DeleteFile(const Request &req, Response *resp) {
+    resp->SetContent(RequestToStr(req), "text/plain");
+}
+
 int main() {
 
-    //std::string str = ",,abc,,,def,,gh,,,";
-    //std::string sep = ",";
-    //std::vector<std::string> array;
-    //int n = Util::Split(str, sep, &array);
-    //for (auto &s : array) {
-    //    std::cout << s << std::endl;
-    //}
-
-    //std::string filename = "./Http.hpp";
-    //std::string str;
-    //if (Util::ReadFile(filename, &str)) {
-    //    std::cout << str << std::endl;
-    //}
-
-    //std::string filename1 = "./ttt.cc";
-    //Util::WriteFile(filename1, str);
-
-    //std::string str = "c  ";
-    //std::string ans1 = Util::UrlEncode(str, true);
-    //std::string ans2 = Util::UrlDecode(ans1, true);
-    //std::cout << ans1 << std::endl;
-    //std::cout << ans2 << "c" << std::endl;
-
-    //std::cout << Util::StatuDescription(200) << std::endl;
-    //std::cout << Util::StatuDescription(800) << std::endl;
-
-    //std::cout << Util::ExtendMime("a.txt") << std::endl;
-    //std::cout << Util::ExtendMime("a.png") << std::endl;
-    //std::cout << Util::ExtendMime("a.xxxxx") << std::endl;
-
-    //std::cout << Util::IsDirectoryFile("../http") << std::endl;
-    //std::cout << Util::IsDirectoryFile("test.cc") << std::endl;
-    //std::cout << Util::IsRegularFile("../http") << std::endl;
-    //std::cout << Util::IsRegularFile("test.cc") << std::endl;
-
-    std::cout << Util::IsValidPath("/html/../../index.html") << std::endl;
+    HttpServer server(8888);
+    server.SetThreadLoopSize(3);
+    server.SetBaseDir(WWWROOT);
+    server.Get("/hello", Hello);
+    server.Post("/login", Login);
+    server.Put("/1234.txt", PutFile);
+    server.Delete("/1234.txt", DeleteFile);
+    server.Listen();
 
     return 0;
 }
