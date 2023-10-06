@@ -1000,6 +1000,9 @@ public:
         channel_.SetCloseCallBack(std::bind(&Connection::CloseHandler, this));
         channel_.SetAnyCallBack(std::bind(&Connection::AnyHandler, this));
     }
+    ~Connection() {
+        DBG_LOG("RELEASE CONNECTION: %p", this);
+    }
     int Id() { return id_; }
     int Fd() { return fd_; }
     bool IsConnected() { statu_ == CONNECTED; }
