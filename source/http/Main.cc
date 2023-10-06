@@ -25,7 +25,8 @@ void Login(const Request &req, Response *resp) {
 }
 
 void PutFile(const Request &req, Response *resp) {
-    resp->SetContent(RequestToStr(req), "text/plain");
+    std::string path = WWWROOT + req.path_;
+    Util::WriteFile(path, req.body_);
 }
 
 void DeleteFile(const Request &req, Response *resp) {
