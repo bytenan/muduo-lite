@@ -349,9 +349,9 @@ public:
     // 判断是否是短链接
     bool IsClose() {
         if(HasHeader("Connection") && GetHeader("Connection") == "keep-alive") {
-            return true;
+            return false;
         }
-        return false;
+        return true;
     }
     // 重置Request实例
     void ReSet() {
@@ -406,9 +406,9 @@ public:
     }
     bool IsClose() {
         if(HasHeader("Connection") && GetHeader("Connection") == "keep-alive") {
-            return true;
+            return false;
         }
-        return false;
+        return true;
     }
     void ReSet() {
         status_ = 200;
@@ -586,7 +586,7 @@ private:
     Request request_;        // 请求信息
 };
 
-#define DEFAULT_TIMEOUT 30
+#define DEFAULT_TIMEOUT 10
 class HttpServer {
 public:
     using Handler = std::function<void(const Request &, Response *)>;
