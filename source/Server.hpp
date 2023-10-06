@@ -947,7 +947,7 @@ private:
     public:
         PlaceHolder(const T &val) : val_(val) {}
         const std::type_info &Type() { return typeid(T); }
-        Holder *clone() { new PlaceHolder(val_); }
+        Holder *clone() { return new PlaceHolder(val_); }
 
         T val_;        
     };
@@ -959,7 +959,7 @@ public:
     template<class T>
     Any(const T &val) : context_(new PlaceHolder<T>(val)) {}
     Any(const Any &other) : context_(nullptr == other.context_ ? nullptr : other.context_->clone()) {}
-    Any &swap(Any &other) { std::swap(context_, other.context_); }
+    Any &swap(Any &other) { std::swap(context_, other.context_); return *this;}
     template<class T>
     Any &operator=(const T &val) {
         Any(val).swap(*this);
