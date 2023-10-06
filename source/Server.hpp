@@ -101,9 +101,10 @@ public:
             return;
         } else if (len <= HeadWritableSize() + TailWritableSize()) {
             // 若尾部空间大小不够，但加上头部空间大小就足够了，那么就将数据全部移动到头部
-            std::copy(ReaderPosition(), ReaderPosition() + ReadableSize(), &(*buffer_.begin()));
+            size_t rsz = ReadableSize();
+            std::copy(ReaderPosition(), ReaderPosition() + rsz, &(*buffer_.begin()));
             reader_offset_ = 0;
-            writer_offset_ = ReadableSize();
+            writer_offset_ = rsz;
         } else {
             // 若尾部空间和头部空间加起来都不够，直接在尾部扩容
             buffer_.resize(writer_offset_ + len);
