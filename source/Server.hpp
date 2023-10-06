@@ -1042,7 +1042,7 @@ public:
         loop_->ExecTask(std::bind(&Connection::ShutdownInLoop, this));
     }
     void Release() {
-        loop_->ExecTask(std::bind(&Connection::ReleaseInLoop, this));
+        loop_->PushTaskToQueue(std::bind(&Connection::ReleaseInLoop, this));
     }
     void EnableInactiveRelease(int sec) {
         loop_->ExecTask(std::bind(&Connection::EnableInactiveReleaseInLoop, this, sec));
@@ -1084,13 +1084,13 @@ private:
             if (ibuffer_.ReadableSize() > 0) {
                 message_callback_(shared_from_this(), &ibuffer_);
             }
-            return ReleaseInLoop();
+            return Release();
         }
         obuffer_.MoveReaderOffset(ret);
         if (obuffer_.ReadableSize() == 0) {
             channel_.DisableMonitorWriter();
             if (statu_ == DISCONNECTING) {
-                ReleaseInLoop();
+                Release();
             }
         }
     }
@@ -1099,7 +1099,7 @@ private:
         if (ibuffer_.ReadableSize() > 0) {
             message_callback_(shared_from_this(), &ibuffer_);
         }
-        return ReleaseInLoop();
+        return Release();
     }
     // channel的错误事件回调函数
     void ErrorHandler() {
@@ -1148,7 +1148,7 @@ private:
         }
         // 当输出缓冲区中无数据时（此时ibuffer以处理完毕），真的关闭连接
         if (obuffer_.ReadableSize() == 0) {
-            ReleaseInLoop();
+            Release();
         }
     }
     // 真的关闭连接
@@ -1178,7 +1178,7 @@ private:
         if (loop_->HasTimerTask(id_)) {
             loop_->RefreshTimerTask(id_);
         } else {
-            loop_->AddTimerTask(id_, sec, std::bind(&Connection::ReleaseInLoop, this));
+            loop_->AddTimerTask(id_, sec, std::bind(&Connection::Release, this));
         }
     }
     // 关闭非活跃连接销毁任务
