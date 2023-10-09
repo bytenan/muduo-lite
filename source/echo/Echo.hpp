@@ -14,18 +14,18 @@ public:
         server_.Run();
     }
 private:
-    void OnMessage(const ConnectionSharedPtr &conn, Buffer *buf) {
+    void OnMessage(const ConnectionPtr &conn, Buffer *buf) {
         conn->Send(buf->ReaderPosition(), buf->ReadableSize());
         buf->MoveReaderOffset(buf->ReadableSize());
         conn->Shutdown(); 
     }
-    void OnConnect(const ConnectionSharedPtr &conn) {
+    void OnConnect(const ConnectionPtr &conn) {
         DBG_LOG("A new connection: %p", conn.get());
     }
-    void OnClose(const ConnectionSharedPtr &conn) {
+    void OnClose(const ConnectionPtr &conn) {
         DBG_LOG("Close a Connection: %p", conn.get());
     }
-    void OnAny(const ConnectionSharedPtr &conn) {
+    void OnAny(const ConnectionPtr &conn) {
         DBG_LOG("A Any Event: %p", conn.get());
     }
 
